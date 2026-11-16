@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OSC.TUBE // AUDIO-REACTIVE CONTOUR OSCILLOGRAPH</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+    :root {
+      --bg: #000000;
+      --tube: #00ff66;
+      --tube-bright: #b8ffd4;
+      --tube-dim: rgba(0, 255, 102, 0.28);
+      --font: 'Share Tech Mono', 'Consolas', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #000000;
+      color: var(--tube);
+      font-family: var(--font);
+      overflow: hidden;
+    }
+
+    body.idle {
+      cursor: none;
+    }
+
+    canvas#scope {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #000000;
+    }
+
+    /* Subtle CRT glass vignette */
+    .vignette {
+      pointer-events: none;
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at center, transparent 58%, rgba(0, 0, 0, 0.78) 100%);
+      z-index: 5;
+    }
+
+    /* Start Overlay */
+    .start-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.94);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      z-index: 30;
+      text-align: center;
+      padding: 24px;
+    }
+
+    .start-overlay.hidden {
+      display: none;
+    }
+
+    .start-title {
+      font-size: 30px;
+      letter-spacing: 4px;
+      text-shadow: 0 0 16px var(--tube);
+    }
+
+    .start-sub {
+      max-width: 520px;
+      font-size: 13px;
+      line-height: 1.6;
+      color: rgba(184, 255, 212, 0.75);
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    button.btn, select.btn {
+      background: #000000;
+      color: var(--tube);
+      border: 1px solid var(--tube-dim);
+      padding: 8px 14px;
+      font-family: var(--font);
+      font-size: 12px;
+      letter-spacing: 1.2px;
+      cursor: pointer;
+      text-transform: uppercase;
+      transition: all 0.15s ease;
+      outline: none;
+    }
+
+    button.btn:hover, select.btn:hover {
+      border-color: var(--tube);
+      box-shadow: 0 0 12px var(--tube-dim);
+    }
+
+    button.btn.active {
+      background: var(--tube);
+      color: #000000;
+      border-color: var(--tube);
+      font-weight: bold;
+    }
+
+    button.btn.primary {
+      padding: 12px 24px;
+      font-size: 14px;
+      border-color: var(--tube);
+      box-shadow: 0 0 18px var(--tube-dim);
+    }
+
+    /* Auto-hiding HUD Bar */
+    .hud-bar {
+      position: fixed;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.86);
+      border: 1px solid var(--tube-dim);
+      box-shadow: 0 0 20px rgba(0, 0, 0, 0.9);
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 96vw;
+      transition: opacity 0.35s ease, transform 0.35s ease;
+    }
+
+    body.idle .hud-bar {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-50%) translateY(12px);
+    }
+
+    .slider-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      letter-spacing: 0.8px;
+    }
+
+    input[type="range"] {
+      accent-color: var(--tube);
+      width: 78px;
+      cursor: pointer;
+    }
+
+    .meter {
+      width: 48px;
+      height: 8px;
+      border: 1px solid var(--tube-dim);
+      background: #000;
+      overflow: hidden;
+    }
+
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--tube);
+      box-shadow: 0 0 8px var(--tube);
+    }
+
+    .status-pill {
+      position: fixed;
+      top: 12px;
+      left: 14px;
+      z-index: 20;
+      font-size: 11px;
+      letter-spacing: 1px;
+      color: var(--tube-dim);
+      transition: opacity 0.35s ease;
+    }
+
+    body.idle .status-pill {
+      opacity: 0;
+    }
+
+    video#camVideo {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <video id="camVideo" autoplay playsinline muted></video>
+  <canvas id="scope"></canvas>
+  <div class="vignette"></div>
+
+  <div class="status-pill" id="statusPill">STANDBY</div>
+
+  <!-- START OVERLAY -->
+  <div class="start-overlay" id="startOverlay">
+    <div class="start-title">OSC.TUBE // LIVE CONTOUR</div>
+    <div class="start-sub">
+      Audio-reactive vacuum-tube oscillograph.<br />
+      Uses your webcam to trace moving silhouettes in the room and your microphone to morph &amp; pulse contours with the music.
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" id="btnStartLive">ENGAGE CAMERA + MIC</button>
+      <button class="btn" id="btnStartDemo">SYNTHETIC DEMO</button>
+    </div>
+  </div>
+
+  <!-- AUTO-HIDING CONTROLS -->
+  <div class="hud-bar" id="hudBar">
+    <select class="btn" id="selMode" title="Oscillograph Mode">
+      <option value="beam" selected>OSCILLOGRAPH LINE</option>
+      <option value="contours">VECTOR CONTOURS</option>
+      <option value="scanlines">TUBE SCANLINES</option>
+      <option value="matrix">PHOSPHOR MATRIX</option>
+      <option value="morph">LISSAJOUS MORPH</option>
+    </select>
+
+    <select class="btn" id="selColor" title="Phosphor Color">
+      <option value="green">PHOSPHOR GREEN</option>
+      <option value="cyan">CYBER CYAN</option>
+      <option value="amber">AMBER TUBE</option>
+      <option value="acid">ACID LIME</option>
+    </select>
+
+    <div class="slider-group">
+      <span>EDGE</span>
+      <input type="range" id="rngEdge" min="15" max="140" value="48" />
+    </div>
+
+    <div class="slider-group">
+      <span>REACT</span>
+      <input type="range" id="rngGain" min="0.4" max="3.0" step="0.1" value="1.5" />
+    </div>
+
+    <div class="slider-group" title="Audio Energy">
+      <span>LVL</span>
+      <div class="meter"><div class="meter-fill" id="audioMeter"></div></div>
+    </div>
+
+    <button class="btn active" id="btnMirror" title="Mirror Camera">MIRROR</button>
+    <button class="btn" id="btnWake" title="Keep Screen Awake">WAKE</button>
+    <button class="btn" id="btnFs" title="Fullscreen (F)">FULL</button>
+  </div>
+
+  <script>
+    (() => {
+      const COLORS = {
+        green: { main: "#00ff66", bright: "#c8ffe0", dim: "rgba(0, 255, 102, 0.28)" },
+        cyan:  { main: "#00f0ff", bright: "#ccfaff", dim: "rgba(0, 240, 255, 0.28)" },
+        amber: { main: "#ff9d00", bright: "#ffe4b5", dim: "rgba(255, 157, 0, 0.28)" },
+        acid:  { main: "#aaff00", bright: "#ebffbd", dim: "rgba(170, 255, 0, 0.28)" },
+      };
+
+      // Processing resolution (clean abstract contours + locked 60fps)
+      const PROC_W = 128;
+      const PROC_H = 72;
+      const procCanvas = document.createElement("canvas");
+      procCanvas.width = PROC_W;
+      procCanvas.height = PROC_H;
+      const procCtx = procCanvas.getContext("2d", { willReadFrequently: true });
+
+      const prevLuma = new Float32Array(PROC_W * PROC_H);
+      const currLuma = new Float32Array(PROC_W * PROC_H);
+      const edgeMap = new Float32Array(PROC_W * PROC_H);
+
+      const canvas = document.getElementById("scope");
+      const ctx = canvas.getContext("2d");
+      const video = document.getElementById("camVideo");
+
+      const state = {
+        running: false,
+        demoMode: false,
+        mode: "beam",
+        colorKey: "green",
+        edgeThresh: 48,
+        audioGain: 1.5,
+        mirror: true,
+        wakeLock: null,
+        hasCam: false,
+        hasMic: false,
+        analyser: null,
+        freqData: null,
+        waveData: null,
+        bass: 0,
+        bassAvg: 0.15,
+        bassPunch: 0,
+        mid: 0,
+        treble: 0,
+        energy: 0,
+        phase: 0,
+      };
+
+      const el = {
+        startOverlay: document.getElementById("startOverlay"),
+        statusPill: document.getElementById("statusPill"),
+        audioMeter: document.getElementById("audioMeter"),
+      };
+
+      function resize() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = Math.floor(window.innerWidth * dpr);
+        canvas.height = Math.floor(window.innerHeight * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+      window.addEventListener("resize", resize);
+      resize();
+
+      // Auto-hide UI when idle (great for tent mode)
+      let idleTimer = null;
+      function resetIdle() {
+        document.body.classList.remove("idle");
+        clearTimeout(idleTimer);
+        if (state.running) {
+          idleTimer = setTimeout(() => document.body.classList.add("idle"), 2800);
+        }
+      }
+      window.addEventListener("mousemove", resetIdle);
+      window.addEventListener("touchstart", resetIdle);
+      window.addEventListener("keydown", resetIdle);
+
+      // --- MEDIA & AUDIO SETUP ---
+      async function startLive() {
+        el.startOverlay.classList.add("hidden");
+        state.running = true;
+        resetIdle();
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 360 }, facingMode: "user" },
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+          });
+
+          if (stream.getVideoTracks().length > 0) {
+            video.srcObject = stream;
+            await video.play();
+            state.hasCam = true;
+          }
+
+          if (stream.getAudioTracks().length > 0) {
+            const ac = new (window.AudioContext || window.webkitAudioContext)();
+            const src = ac.createMediaStreamSource(stream);
+            const analyser = ac.createAnalyser();
+            analyser.fftSize = 2048;
+            analyser.smoothingTimeConstant = 0.62;
+            src.connect(analyser);
+            state.analyser = analyser;
+            state.freqData = new Uint8Array(analyser.frequencyBinCount);
+            state.waveData = new Uint8Array(analyser.fftSize);
+            state.hasMic = true;
+          }
+
+          el.statusPill.textContent = `CAM:${state.hasCam ? "ON" : "OFF"} // MIC:${state.hasMic ? "ON" : "OFF"}`;
+        } catch (err) {
+          el.statusPill.textContent = `MEDIA FALLBACK (${err.name}) — SYNTHETIC DEMO`;
+          state.demoMode = true;
+        }
+
+        requestAnimationFrame(loop);
+      }
+
+      function startDemo() {
+        el.startOverlay.classList.add("hidden");
+        state.running = true;
+        state.demoMode = true;
+        el.statusPill.textContent = "SYNTHETIC DEMO MODE";
+        resetIdle();
+        requestAnimationFrame(loop);
+      }
+
+      // --- AUDIO ANALYSIS (BASS-FOCUSED + ADAPTIVE BEAT PUNCH) ---
+      function updateAudio(t) {
+        if (state.analyser && state.hasMic) {
+          state.analyser.getByteFrequencyData(state.freqData);
+          state.analyser.getByteTimeDomainData(state.waveData);
+
+          // fftSize=2048 -> ~23 Hz/bin: bins 1..10 = ~23-230 Hz (sub-bass & kick)
+          let bSum = 0, bPeak = 0;
+          for (let i = 1; i <= 10; i++) {
+            const v = state.freqData[i];
+            bSum += v;
+            if (v > bPeak) bPeak = v;
+          }
+          let mSum = 0, tSum = 0;
+          for (let i = 11; i < 85; i++) mSum += state.freqData[i];
+          for (let i = 85; i < 280; i++) tSum += state.freqData[i];
+
+          const rawBass = ((bSum / 10) * 0.45 + bPeak * 0.55) / 255 * state.audioGain;
+          const rawMid = (mSum / (74 * 255)) * state.audioGain;
+          const rawTreble = (tSum / (195 * 255)) * state.audioGain;
+
+          state.bass = state.bass * 0.38 + Math.min(2.0, rawBass) * 0.62;
+          state.bassAvg = state.bassAvg * 0.96 + state.bass * 0.04;
+          const delta = Math.max(0, state.bass - state.bassAvg * 1.04);
+          state.bassPunch = Math.max(state.bassPunch * 0.78, Math.min(2.0, delta * 2.8 + state.bass * 0.35));
+
+          state.mid = state.mid * 0.55 + Math.min(1.6, rawMid) * 0.45;
+          state.treble = state.treble * 0.55 + Math.min(1.6, rawTreble) * 0.45;
+          state.energy = Math.min(1.8, state.bass * 0.7 + state.mid * 0.2 + state.treble * 0.1);
+        } else {
+          // Synthetic beat pulse when in demo mode
+          const beat = Math.pow(Math.max(0, Math.sin(t * 0.0042)), 4);
+          state.bass = beat * 1.1 * state.audioGain;
+          state.bassPunch = beat * 1.3 * state.audioGain;
+          state.mid = (0.3 + 0.3 * Math.sin(t * 0.0021)) * state.audioGain;
+          state.treble = (0.2 + 0.25 * Math.cos(t * 0.007)) * state.audioGain;
+          state.energy = state.bass * 0.7 + state.mid * 0.3;
+        }
+        el.audioMeter.style.width = `${Math.min(100, (state.bass * 0.6 + state.bassPunch * 0.4) * 75)}%`;
+      }
+
+      // --- CAMERA CONTOUR + MOTION PROCESSING ---
+      function processFrame(t) {
+        if (state.hasCam && video.readyState >= 2) {
+          procCtx.save();
+          if (state.mirror) {
+            procCtx.translate(PROC_W, 0);
+            procCtx.scale(-1, 1);
+          }
+          procCtx.drawImage(video, 0, 0, PROC_W, PROC_H);
+          procCtx.restore();
+
+          const data = procCtx.getImageData(0, 0, PROC_W, PROC_H).data;
+          for (let i = 0, p = 0; i < currLuma.length; i++, p += 4) {
+            prevLuma[i] = currLuma[i];
+            currLuma[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+          }
+
+          // Sobel edge + motion delta
+          const thresh = state.edgeThresh;
+          for (let y = 1; y < PROC_H - 1; y++) {
+            const row = y * PROC_W;
+            for (let x = 1; x < PROC_W - 1; x++) {
+              const i = row + x;
+              const tl = currLuma[i - PROC_W - 1], tc = currLuma[i - PROC_W], tr = currLuma[i - PROC_W + 1];
+              const ml = currLuma[i - 1], mr = currLuma[i + 1];
+              const bl = currLuma[i + PROC_W - 1], bc = currLuma[i + PROC_W], br = currLuma[i + PROC_W + 1];
+
+              const gx = -tl + tr - 2 * ml + 2 * mr - bl + br;
+              const gy = -tl - 2 * tc - tr + bl + 2 * bc + br;
+              const edge = Math.abs(gx) + Math.abs(gy);
+              const motion = Math.abs(currLuma[i] - prevLuma[i]) * 2.4;
+
+              const val = Math.max(0, (edge * 0.35 + motion) - thresh);
+              edgeMap[i] = Math.min(1, val / 140);
+            }
+          }
+        } else {
+          // Synthetic moving silhouettes for demo mode
+          const cx1 = PROC_W * (0.35 + 0.15 * Math.sin(t * 0.0009));
+          const cx2 = PROC_W * (0.65 + 0.14 * Math.cos(t * 0.0007));
+          const cy = PROC_H * 0.58;
+          for (let y = 0; y < PROC_H; y++) {
+            for (let x = 0; x < PROC_W; x++) {
+              const d1 = Math.hypot((x - cx1) * 1.1, (y - cy) * 0.65);
+              const d2 = Math.hypot((x - cx2) * 1.1, (y - (cy - 4)) * 0.65);
+              const ring1 = Math.exp(-Math.pow((d1 - 24 - state.bass * 8) / 3.2, 2));
+              const ring2 = Math.exp(-Math.pow((d2 - 20 - state.mid * 6) / 3.2, 2));
+              edgeMap[y * PROC_W + x] = Math.min(1, Math.max(ring1, ring2));
+            }
+          }
+        }
+      }
+
+      // --- RENDER MODES ---
+      function getWaveSample(normX, t) {
+        if (state.waveData && state.hasMic) {
+          const idx = Math.floor(normX * (state.waveData.length - 1));
+          return ((state.waveData[idx] - 128) / 128) * state.audioGain;
+        }
+        return Math.sin(normX * 18 + t * 0.01) * state.bass * 0.7 +
+               Math.cos(normX * 42 - t * 0.017) * state.treble * 0.4;
+      }
+
+      function strokeGlow(path, col, coreWidth = 1.3, haloExtra = 3.5) {
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = col.dim;
+        ctx.lineWidth = coreWidth + haloExtra + state.bass * 3.5;
+        ctx.stroke(path);
+        ctx.strokeStyle = col.main;
+        ctx.lineWidth = coreWidth + 1.0 + state.bass * 1.2;
+        ctx.stroke(path);
+        ctx.strokeStyle = col.bright;
+        ctx.lineWidth = coreWidth;
+        ctx.stroke(path);
+      }
+
+      // Continuous single-beam XY oscillograph trace (abstract, compact, subtle bass pulse)
+      function renderBeamTrace(w, h, col, t) {
+        const marginScale = 0.78;
+        const scale = marginScale * (1 + state.bass * 0.035 + state.bassPunch * 0.025);
+        const drawW = w * scale;
+        const drawH = h * scale;
+        const offX = (w - drawW) * 0.5;
+        const offY = (h - drawH) * 0.5;
+
+        // Collect sparse contour points
+        const pts = [];
+        for (let y = 2; y < PROC_H - 2; y += 2) {
+          for (let x = 2; x < PROC_W - 2; x += 2) {
+            const e = edgeMap[y * PROC_W + x];
+            if (e > 0.22) {
+              pts.push({ x, y, e, used: false });
+              if (pts.length >= 240) break;
+            }
+          }
+          if (pts.length >= 240) break;
+        }
+
+        if (pts.length < 2) {
+          // Idle flat-line oscillograph wave when room is completely still
+          const path = new Path2D();
+          const cy = h * 0.5;
+          for (let i = 0; i <= 120; i++) {
+            const nx = i / 120;
+            const x = offX + nx * drawW;
+            const y = cy + getWaveSample(nx, t) * (12 + state.bass * 28);
+            if (i === 0) path.moveTo(x, y);
+            else path.lineTo(x, y);
+          }
+          strokeGlow(path, col, 1.3, 3.5);
+          return;
+        }
+
+        // Greedy nearest-neighbor chaining for one continuous oscillograph line
+        const path = new Path2D();
+        let curr = pts[0];
+        curr.used = true;
+        const waveAmp = 2.5 + state.bass * 7 + state.bassPunch * 5;
+
+        const mapX = (p) => offX + (p.x / PROC_W) * drawW + Math.sin(p.y * 0.22 + state.phase) * waveAmp * 0.5;
+        const mapY = (p) => offY + (p.y / PROC_H) * drawH + getWaveSample(p.x / PROC_W, t) * waveAmp;
+
+        path.moveTo(mapX(curr), mapY(curr));
+
+        for (let step = 1; step < pts.length; step++) {
+          let best = null;
+          let bestD = 1e9;
+          for (let j = 0; j < pts.length; j++) {
+            const cand = pts[j];
+            if (cand.used) continue;
+            const dx = cand.x - curr.x;
+            const dy = cand.y - curr.y;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+              bestD = d;
+              best = cand;
+            }
+          }
+          if (!best) break;
+          best.used = true;
+          curr = best;
+          path.lineTo(mapX(curr), mapY(curr));
+        }
+
+        strokeGlow(path, col, 1.25, 4);
+      }
+
+      function renderScanlines(w, h, col, t) {
+        const rows = 42;
+        const marginScale = 0.84;
+        const drawW = w * marginScale;
+        const drawH = h * marginScale;
+        const offX = (w - drawW) * 0.5;
+        const offY = (h - drawH) * 0.5;
+        const rowStep = drawH / rows;
+        const ampBase = 10 + state.bass * 14;
+
+        const path = new Path2D();
+        for (let r = 2; r < rows - 1; r++) {
+          const py = Math.floor((r / rows) * PROC_H);
+          const baseY = offY + r * rowStep;
+          for (let x = 0; x < PROC_W; x++) {
+            const e = edgeMap[py * PROC_W + x];
+            const normX = x / (PROC_W - 1);
+            const sx = offX + normX * drawW;
+            const wave = getWaveSample(normX, t + r * 15);
+            const disp = e * ampBase + wave * (2 + state.bass * 5);
+            const sy = baseY - disp;
+            if (x === 0) path.moveTo(sx, sy);
+            else path.lineTo(sx, sy);
+          }
+        }
+        strokeGlow(path, col, 1.1, 3);
+      }
+
+      function renderContours(w, h, col, t) {
+        const marginScale = 0.82;
+        const drawW = w * marginScale;
+        const drawH = h * marginScale;
+        const offX = (w - drawW) * 0.5;
+        const offY = (h - drawH) * 0.5;
+        const cellW = drawW / PROC_W;
+        const cellH = drawH / PROC_H;
+        const jitter = state.bass * 5 + state.bassPunch * 4;
+
+        const path = new Path2D();
+        for (let y = 1; y < PROC_H - 1; y += 2) {
+          let drawing = false;
+          for (let x = 1; x < PROC_W - 1; x++) {
+            const e = edgeMap[y * PROC_W + x];
+            if (e > 0.16) {
+              const sx = offX + x * cellW + Math.sin(y * 0.2 + state.phase) * jitter * e;
+              const sy = offY + y * cellH + getWaveSample(x / PROC_W, t) * 4 * e;
+              if (!drawing) {
+                path.moveTo(sx, sy);
+                drawing = true;
+              } else {
+                path.lineTo(sx, sy);
+              }
+            } else {
+              drawing = false;
+            }
+          }
+        }
+        strokeGlow(path, col, 1.25, 3.5);
+      }
+
+      function renderMorph(w, h, col, t) {
+        renderContours(w, h, col, t);
+
+        const cx = w / 2;
+        const cy = h / 2;
+        const baseR = Math.min(w, h) * (0.20 + state.bass * 0.05);
+        const path = new Path2D();
+        const steps = 160;
+        for (let i = 0; i <= steps; i++) {
+          const a = (i / steps) * Math.PI * 2;
+          const px = Math.floor(((Math.cos(a) * 0.4 + 0.5) * (PROC_W - 2)) + 1);
+          const py = Math.floor(((Math.sin(a) * 0.4 + 0.5) * (PROC_H - 2)) + 1);
+          const e = edgeMap[py * PROC_W + px] || 0;
+          const wave = getWaveSample(i / steps, t);
+          const r = baseR + wave * 28 + e * 38 * (1 + state.bass * 0.5);
+          const x = cx + Math.cos(a) * r;
+          const y = cy + Math.sin(a) * r;
+          if (i === 0) path.moveTo(x, y);
+          else path.lineTo(x, y);
+        }
+        path.closePath();
+        strokeGlow(path, col, 1.4, 4);
+      }
+
+      function renderMatrix(w, h, col, t) {
+        const marginScale = 0.82;
+        const drawW = w * marginScale;
+        const drawH = h * marginScale;
+        const offX = (w - drawW) * 0.5;
+        const offY = (h - drawH) * 0.5;
+        const cellW = drawW / PROC_W;
+        const cellH = drawH / PROC_H;
+        const cx = w * 0.5;
+        const cy = h * 0.5;
+        const zoom = 1 + state.bass * 0.03 + state.bassPunch * 0.03;
+
+        const path = new Path2D();
+        for (let y = 1; y < PROC_H - 1; y += 2) {
+          for (let x = 1; x < PROC_W - 1; x += 2) {
+            const e = edgeMap[y * PROC_W + x];
+            if (e < 0.14) continue;
+            const rawX = offX + x * cellW;
+            const rawY = offY + y * cellH;
+            const sx = cx + (rawX - cx) * zoom;
+            const sy = cy + (rawY - cy) * zoom;
+            const len = e * 7 + state.bass * 6 + state.bassPunch * 5;
+            path.moveTo(sx - len * 0.5, sy);
+            path.lineTo(sx + len * 0.5, sy);
+          }
+        }
+        strokeGlow(path, col, 1.15, 3);
+      }
+
+      // --- MAIN LOOP ---
+      function loop(t) {
+        if (!state.running) return;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const col = COLORS[state.colorKey];
+
+        updateAudio(t);
+        processFrame(t);
+        state.phase += 0.06 + state.energy * 0.08;
+
+        // Phosphor persistence fade on pure black OLED
+        ctx.fillStyle = "rgba(0, 0, 0, 0.34)";
+        ctx.fillRect(0, 0, w, h);
+
+        if (state.mode === "beam") renderBeamTrace(w, h, col, t);
+        else if (state.mode === "scanlines") renderScanlines(w, h, col, t);
+        else if (state.mode === "contours") renderContours(w, h, col, t);
+        else if (state.mode === "morph") renderMorph(w, h, col, t);
+        else renderMatrix(w, h, col, t);
+
+        requestAnimationFrame(loop);
+      }
+
+      // --- CONTROLS ---
+      document.getElementById("btnStartLive").addEventListener("click", startLive);
+      document.getElementById("btnStartDemo").addEventListener("click", startDemo);
+
+      document.getElementById("selMode").addEventListener("change", (e) => {
+        state.mode = e.target.value;
+      });
+
+      document.getElementById("selColor").addEventListener("change", (e) => {
+        state.colorKey = e.target.value;
+        const c = COLORS[state.colorKey];
+        document.documentElement.style.setProperty("--tube", c.main);
+        document.documentElement.style.setProperty("--tube-bright", c.bright);
+        document.documentElement.style.setProperty("--tube-dim", c.dim);
+      });
+
+      document.getElementById("rngEdge").addEventListener("input", (e) => {
+        state.edgeThresh = Number(e.target.value);
+      });
+
+      document.getElementById("rngGain").addEventListener("input", (e) => {
+        state.audioGain = Number(e.target.value);
+      });
+
+      document.getElementById("btnMirror").addEventListener("click", (e) => {
+        state.mirror = !state.mirror;
+        e.currentTarget.classList.toggle("active", state.mirror);
+      });
+
+      function toggleFullscreen() {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        } else {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+      document.getElementById("btnFs").addEventListener("click", toggleFullscreen);
+
+      document.getElementById("btnWake").addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        if (state.wakeLock) {
+          await state.wakeLock.release();
+          state.wakeLock = null;
+          btn.classList.remove("active");
+        } else if ("wakeLock" in navigator) {
+          try {
+            state.wakeLock = await navigator.wakeLock.request("screen");
+            btn.classList.add("active");
+          } catch (_) {}
+        }
+      });
+
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "f" || e.key === "F") toggleFullscreen();
+      });
+    })();
+  </script>
+</body>
+</html>
